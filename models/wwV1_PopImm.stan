@@ -13,22 +13,36 @@ data {
   int W;                           // number of unique periods for different Rts
   array[N2] int week_index;        // index specifying which Rt period a particular day's observation belongs to
   
+  // Inputs Relating to the Wastewater Observation Process
+  int n_ww;                        // number of wastewater observations
+  array[n_ww] int ww_obs_times;    // timepoint for each wastewater observation
+  array[N2] real wastewater;       // reported wastewater SARS-CoV-2 concentration (with NAs on missing dates)
+  vector[N2] wastewater_delay;     // wastewater delay distribution (shedding temporal profile of individuals following infection)
+
   // Miscellaneous Inputs
   int SI_cutoff;                   // number of days after which SI is cutoff (for computational efficiency purposes)
   real<lower=0,upper=1> ifr_mean;  // mean IFR for prior
   real<lower=0> ifr_sd;            // sd IFR for prior    
+  real<lower=0> ww_scale_mean;     // mean ww_scale for prior
+  real<lower=0> ww_scale_sd;       // sd ww_scale for prior   
+  real<lower=0> sigma_mean;        // mean ww_scale for prior
+  real<lower=0> sigma_sd;          // sd ww_scale for prior   
   real pop;                        // population for immunity adjustment
 }
 
 transformed data {
-  vector[SI_cutoff] SI_rev;              // SI in reverse order
-  vector[SI_cutoff] death_delay_rev;     // death delay distribution in reversed order
+  vector[SI_cutoff] SI_rev;                // SI in reverse order
+  vector[SI_cutoff] death_delay_rev;       // death delay distribution in reversed order
+  vector[SI_cutoff] wastewater_delay_rev;  // death delay distribution in reversed order 
   
-  for(i in 1:SI_cutoff)                  // reversing the SI and death delay distribution - done for convenience (see code below)
-    SI_rev[i] = SI[SI_cutoff - i + 1];       
-  
+  for(i in 1:SI_cutoff) {                    // done for computational efficiency & convenience
+    SI_rev[i] = SI[SI_cutoff - i + 1];
+  }
   for(i in 1:SI_cutoff) {
     death_delay_rev[i] = death_delay[SI_cutoff - i + 1];
+  }
+  for(i in 1:SI_cutoff) {
+    wastewater_delay_rev[i] = wastewater_delay[SI_cutoff - i + 1];
   }
 }
 
@@ -40,6 +54,8 @@ parameters {
   real<lower=0> tau;                   // Prior on dispersion for initial_infections
   real<lower=0.001> phi;               // Overdispersion in the deaths data observational model
   real<lower=0,upper=1> ifr;           // Infection fatality ratio
+  real<lower=0.00001> ww_scale;        // Scaling factor converting number of infections to wastewater units
+  real<lower=0.001> sigma;             // Overdispersion in the wastewater data observational model
   vector[W+1] weekly_effect;           // Time-varying Rt weekly effect
   real<lower=0, upper=1> weekly_rho;   // Relating to variance of weekly effects for time-varying Rt
   real<lower=0, upper=1> weekly_rho1;  // Relating to variance of weekly effects for time-varying Rt
@@ -50,6 +66,7 @@ transformed parameters {
   
   // Setting Up the Storage for Inferred Quantities
   vector<lower=0>[N2] infections = rep_vector(0, N2);   // Number of infections at each timepoint
+  vector<lower=0>[N2] E_wastewater = rep_vector(0, N2); // Wastewater measure at each timepoint
   vector<lower=0>[N2] E_deaths  = rep_vector(0, N2);    // Number of deaths at each timepoint
   vector[N2] Rt = rep_vector(0, N2);                    // Reproduction number over time
   vector<lower=0>[N2] Rt_adj = Rt;
@@ -75,6 +92,16 @@ transformed parameters {
       cumm_sum[i] = cumm_sum[i - 1] + infections[i - 1];
       Rt_adj[i] = ((pop - cumm_sum[i]) / pop) * Rt[i];
       infections[i] = Rt_adj[i] * convolution;
+    }
+    
+    // Calculating wastewater concentration over time
+    E_wastewater[1] = 1e-15 * infections[1]; // small amount of noise to avoid 0s at very beginning of time-series. Check whether needed. 
+    for (i in 2:N2){
+      if ((i - SI_cutoff - 1) < 1) {
+        E_wastewater[i] = ww_scale * dot_product(infections[1:(i - 1)], tail(wastewater_delay_rev, i - 1));
+      } else {
+        E_wastewater[i] = ww_scale * dot_product(infections[(i - SI_cutoff):(i - 1)], tail(wastewater_delay_rev, SI_cutoff));
+      }
     }
     
     // Calculating deaths over time
@@ -107,6 +134,12 @@ model {
   weekly_effect[2] ~ normal(0, weekly_sd * sqrt(1 - pow(weekly_rho, 2) - pow(weekly_rho1, 2) - 2 * pow(weekly_rho, 2) * weekly_rho1/(1 - weekly_rho1)));
   weekly_effect[3:(W+1)] ~ normal(weekly_effect[2:W]* weekly_rho + weekly_effect[1:(W-1)] * weekly_rho1, 
                                   weekly_sd *sqrt(1 - pow(weekly_rho, 2) - pow(weekly_rho1, 2) - 2 * pow(weekly_rho,2) * weekly_rho1/(1-weekly_rho1)));
+  
+  // Priors Relating to Wastewater Observation Process
+  ## CHANGE TO ACCOUNT FOR LACK OF COMPLETE TIME-SERIES
+  ww_scale ~ normal(ww_scale_mean, ww_scale_sd);
+  sigma ~ normal(sigma_mean, sigma_sd);
+  wastewater[ww_obs_times] ~ gamma(0.00001 + E_wastewater[ww_obs_times] * sigma, sigma);
   
   // Priors Relating to Deaths Observation Process
   ifr ~ normal(ifr_mean, ifr_sd);
