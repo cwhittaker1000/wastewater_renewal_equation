@@ -27,17 +27,16 @@ data {
   real<lower=0> ww_scale_sd;       // sd ww_scale for prior   
   real<lower=0> sigma_mean;        // mean ww_scale for prior
   real<lower=0> sigma_sd;          // sd ww_scale for prior   
-  real pop;                        // population for immunity adjustment
 }
 
 transformed data {
-  vector[SI_cutoff] SI_rev;                // SI in reverse order
-  vector[SI_cutoff] death_delay_rev;       // death delay distribution in reversed order
+  vector[SI_cutoff] SI_rev;              // SI in reverse order
+  vector[SI_cutoff] death_delay_rev;     // death delay distribution in reversed order
   vector[SI_cutoff] wastewater_delay_rev;  // wastewater delay distribution in reversed order 
+
+  for(i in 1:SI_cutoff)                  // reversing the SI and death delay distribution - done for convenience (see code below)
+    SI_rev[i] = SI[SI_cutoff - i + 1];       
   
-  for(i in 1:SI_cutoff) {                    // done for computational efficiency & convenience
-    SI_rev[i] = SI[SI_cutoff - i + 1];
-  }
   for(i in 1:SI_cutoff) {
     death_delay_rev[i] = death_delay[SI_cutoff - i + 1];
   }
@@ -45,7 +44,6 @@ transformed data {
     wastewater_delay_rev[i] = wastewater_delay[SI_cutoff - i + 1];
   }
 }
-
 
 parameters {
   real<lower=0> mu;                    // R0 - basic reproduction number
@@ -73,8 +71,6 @@ transformed parameters {
   {
     
     infections[1:N0] = rep_vector(initial_infections, N0); // learn the number of infections in the first N0 days and populate infections vector
-    vector[N2] cumm_sum = rep_vector(0, N2);               // cumulative incidence of infections
-    cumm_sum[2:N0] = cumulative_sum(infections[2:N0]);     // --> required for population immunity adjustment (susceptible depletion)
 
     // Calculating Time-Varying Rt
     for (i in 1:N2) {
@@ -89,8 +85,7 @@ transformed parameters {
       } else {
         convolution = dot_product(infections[(i - SI_cutoff):(i - 1)], tail(SI_rev, SI_cutoff)); 
       }
-      cumm_sum[i] = cumm_sum[i - 1] + infections[i - 1];
-      Rt_adj[i] = ((pop - cumm_sum[i]) / pop) * Rt[i];
+      Rt_adj[i] = Rt[i]; 
       infections[i] = Rt_adj[i] * convolution;
     }
     
@@ -136,7 +131,7 @@ model {
                                   weekly_sd *sqrt(1 - pow(weekly_rho, 2) - pow(weekly_rho1, 2) - 2 * pow(weekly_rho,2) * weekly_rho1/(1-weekly_rho1)));
   
   // Priors Relating to Wastewater Observation Process
-  ## CHANGE TO ACCOUNT FOR LACK OF COMPLETE TIME-SERIES
+  // CHANGE TO ACCOUNT FOR LACK OF COMPLETE TIME-SERIES
   ww_scale ~ normal(ww_scale_mean, ww_scale_sd);
   sigma ~ normal(sigma_mean, sigma_sd);
   wastewater[ww_obs_times] ~ gamma(0.00001 + E_wastewater[ww_obs_times] * sigma, sigma);

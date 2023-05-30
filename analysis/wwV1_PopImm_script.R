@@ -22,6 +22,7 @@ pop <- 10^7
 ### Generating Synthetic Data 
 infections <- vector(mode = "numeric", length = N2)
 infections[1:N0] <- initial_infections
+Rt_adj_synth[1:N0] <- Rt_synth[1:N0]
 deaths <- vector(mode = "numeric", length = N2)
 wastewater <- vector(mode = "numeric", length = N2)
 cumm_sum <- vector(mode = "numeric", length = N2)
